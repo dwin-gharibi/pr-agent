@@ -1654,6 +1654,10 @@ def github_action_output(output_data: dict, key_name: str):
     return
 
 
+# Telegram rejects a sendMessage body longer than this.
+TELEGRAM_MAX_MESSAGE_CHARS = 4096
+
+
 def _push_outputs_sink_url(cfg: dict, key: str) -> str:
     """Return cfg[key] if it is an absolute https URL with a host, else "" (with a warning).
 
@@ -1720,6 +1724,22 @@ def push_outputs(message_type: str, payload: dict | None = None, markdown: str |
             if slack_webhook_url:
                 text = markdown if markdown is not None else json.dumps(payload or {}, ensure_ascii=False)
                 requests.post(slack_webhook_url, json={"text": text}, timeout=5, allow_redirects=False)
+
+        # Telegram addresses a chat rather than a URL, so the token and chat id are configured
+        # separately and the endpoint is fixed - a repository cannot redirect the message.
+        if "telegram" in channels:
+            token = str(cfg.get('telegram_bot_token') or '').strip()
+            chat_id = str(cfg.get('telegram_chat_id') or '').strip()
+            if not token or not chat_id:
+                get_logger().warning(
+                    "push_outputs: the telegram channel needs both telegram_bot_token and telegram_chat_id")
+            else:
+                text = markdown if markdown is not None else json.dumps(payload or {}, ensure_ascii=False)
+                requests.post(f"https://api.telegram.org/bot{token}/sendMessage",
+                              json={"chat_id": chat_id,
+                                    "text": text[:TELEGRAM_MAX_MESSAGE_CHARS],
+                                    "disable_web_page_preview": True},
+                              timeout=5, allow_redirects=False)
     except Exception as e:
         # Log only the exception type: requests errors embed the (secret-bearing) URL in their text.
         get_logger().warning(f"push_outputs failed: {type(e).__name__}")
